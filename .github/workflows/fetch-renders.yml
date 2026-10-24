@@ -1,0 +1,34 @@
+name: Fetch renders
+
+# Downloads finished renderings listed in 3507-san-luis/fetch/*.txt
+# (one "filename url" pair per line) into 3507-san-luis/renders/.
+on:
+  push:
+    paths:
+      - "3507-san-luis/fetch/**"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download files
+        run: |
+          mkdir -p 3507-san-luis/renders
+          cat 3507-san-luis/fetch/*.txt | while read -r name url; do
+            [ -z "$name" ] && continue
+            [ -f "3507-san-luis/renders/$name" ] && continue
+            curl -fsSL --retry 3 -o "3507-san-luis/renders/$name" "$url" || echo "failed: $name"
+          done
+          ls -la 3507-san-luis/renders
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add 3507-san-luis/renders
+          git diff --cached --quiet || git commit -m "Add fetched renders"
+          git pull --rebase
+          git push
