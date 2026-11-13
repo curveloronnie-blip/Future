@@ -1,0 +1,22 @@
+# Florida's foreclosure-rescue law (F.S. 501.1377) and federal MARS rules restrict offers to help
+# homeowners in foreclosure. This letter offers only to BUY the property. Do not promise to stop
+# a foreclosure, negotiate with the lender, or collect any upfront fee. Have a Florida real-estate
+# attorney review your foreclosure marketing and purchase paperwork.
+{date}
+
+Dear {dear},
+
+I'm a local real-estate investor interested in buying the property at {property_address} in {property_city}.
+
+If you're considering selling, I can buy as-is and close quickly. You don't pay commissions or fees to me.
+
+You also have other options, and you may want to speak with your lender, a HUD-approved housing counselor (800-569-4287), or an attorney before deciding anything.
+
+If a sale makes sense for you, I'm at {your_phone} or {your_email}.
+
+Sincerely,
+
+{your_name}
+{your_company}
+
+I am not affiliated with your lender or any government agency.

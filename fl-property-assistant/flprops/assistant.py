@@ -10,7 +10,7 @@ import sqlite3
 
 import anthropic
 
-from . import deals, fetch, links, pipeline, search, skiptrace
+from . import buyers, deals, fetch, links, pipeline, search, skiptrace
 from .db import EVENT_TYPES
 
 MODEL = "claude-opus-5-5"
@@ -131,6 +131,15 @@ TOOLS = [
             "required": ["parcel_id"], "additionalProperties": False},
     },
     {
+        "name": "find_buyers",
+        "description": "Investor/cash buyers for a deal (matched by ZIP/county and price), or buyers in an area "
+                       "when no parcel is given.",
+        "input_schema": {"type": "object", "properties": {
+            "parcel_id": {"type": "string"}, "county": {"type": "string"}, "zip_code": {"type": "string"},
+            "price": {"type": "number", "description": "Asking price to buyers."}},
+            "additionalProperties": False},
+    },
+    {
         "name": "list_pipeline",
         "description": "Leads in the pipeline, optionally by status or only those with follow-ups due.",
         "input_schema": {"type": "object", "properties": {
@@ -201,6 +210,13 @@ def run_tool(conn: sqlite3.Connection, name: str, args: dict):
         if args.get("note"):
             pipeline.log(conn, p["county"], p["parcel_key"], "note", args["note"])
         return pipeline.get_lead(conn, p["county"], p["parcel_key"])
+    if name == "find_buyers":
+        if args.get("parcel_id"):
+            p = search.get_property(conn, args["parcel_id"], args.get("county"))
+            if not p:
+                return {"error": "parcel not found in local database"}
+            return buyers.match(conn, p, args.get("price"), 30)
+        return buyers.list_buyers(conn, args.get("zip_code"), args.get("county"), 30)
     if name == "list_pipeline":
         return pipeline.board(conn, args.get("status"), bool(args.get("due_only")))[:100]
     if name == "database_status":

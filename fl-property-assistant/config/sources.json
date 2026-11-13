@@ -117,5 +117,13 @@
   "deal_defaults": {
     "_readme": "Override any key from flprops/deals.py DEFAULTS, e.g. assignment_fee, rehab_psf, refi_rate.",
     "assignment_fee": 10000
+  },
+  "business": {
+    "_readme": "Your details, used in letters.",
+    "your_name": "Your Name",
+    "your_company": "Your Company LLC",
+    "your_phone": "(555) 555-5555",
+    "your_email": "you@example.com",
+    "your_website": ""
   }
 }

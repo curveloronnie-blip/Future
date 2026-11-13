@@ -89,6 +89,17 @@ CREATE TABLE IF NOT EXISTS activity (
     kind TEXT, note TEXT, at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS buyers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL, buyer_key TEXT NOT NULL UNIQUE,
+    mail_addr TEXT, phone TEXT, email TEXT,
+    zips TEXT,                       -- comma separated ZIPs they buy in
+    counties TEXT, min_price REAL, max_price REAL,
+    strategies TEXT,                 -- flip, brrrr, rental, new construction ...
+    purchases_24mo INTEGER, last_purchase TEXT,
+    source TEXT, notes TEXT, added_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS imports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT, kind TEXT, rows INTEGER, ran_at TEXT DEFAULT CURRENT_TIMESTAMP

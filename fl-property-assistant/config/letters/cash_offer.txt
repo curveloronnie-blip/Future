@@ -1,0 +1,19 @@
+# Lines starting with # are notes and are not printed. Placeholders: {dear} {addressee}
+# {property_address} {property_city} {your_name} {your_company} {your_phone} {your_email} {date}
+{date}
+
+Dear {dear},
+
+I'm a local buyer and I'm interested in purchasing your property at {property_address} in {property_city}.
+
+I buy houses as-is: no repairs, no cleaning, no agent commissions, and I pay normal closing costs. I can close on your timeline, whether that's two weeks or a few months.
+
+If you've thought about selling, or would just like to know what I could offer, call or text me at {your_phone}. There's no obligation.
+
+Sincerely,
+
+{your_name}
+{your_company}
+{your_phone} · {your_email}
+
+If you'd prefer not to receive letters from me, call or email and I'll remove your address.

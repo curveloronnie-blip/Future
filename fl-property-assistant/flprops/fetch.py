@@ -133,7 +133,8 @@ def socrata_query(domain: str, dataset_id: str, where: str | None = None, page_s
 
 # ---------------------------------------------------------------- configured sources
 
-def load_sources(path: Path = CONFIG) -> dict:
+def load_sources(path: Path | None = None) -> dict:
+    path = path or CONFIG
     if not path.exists():
         return {"sources": [], "county_overrides": {}}
     return json.loads(path.read_text())

@@ -1,0 +1,17 @@
+# For out-of-state / absentee owners and tired landlords.
+{date}
+
+Dear {dear},
+
+I'm writing about your property at {property_address} in {property_city}.
+
+I buy rental and vacant properties as-is, with tenants in place or not. If managing it from a distance has become more trouble than it's worth, I'd like to make you a cash offer. No repairs, no showings, no commissions.
+
+Call or text {your_phone}, or email {your_email}.
+
+Best regards,
+
+{your_name}
+{your_company}
+
+If you'd prefer not to receive letters from me, let me know and I'll remove your address.

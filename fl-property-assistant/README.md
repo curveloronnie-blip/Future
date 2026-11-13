@@ -6,6 +6,43 @@ out-of-state owners). Includes a plain-English AI assistant powered by Claude.
 
 Runs on your own computer. Data lives in a local SQLite database (`data/flprops.db`).
 
+## Start here (no coding needed)
+
+1. Install Python 3.10+ from python.org (Windows: tick "Add Python to PATH").
+2. Download this folder, then double-click **start.command** (Mac) or **start.bat** (Windows).
+   On Linux, run `./start.sh`. The first run sets everything up, then the app opens in your
+   browser at http://127.0.0.1:8765.
+3. In the app:
+   - **Settings**: your name, phone and company (printed on letters), plus deal assumptions.
+   - **Import data**: upload your counties' NAL files (link on the home page) and any clerk or
+     tax collector lists.
+   - **Distressed**: filter, then "Add all to pipeline".
+   - **Pipeline**: download the skip-trace upload file, mailing list, letters and dialer list.
+   - **Property page**: contacts, deal analyzer (wholesale / flip / BRRR), matching buyers, notes
+     and follow-ups.
+   - **Buyers**: find active investor buyers in the records, or upload your buyers list.
+   - **Assistant**: ask anything in plain English. Needs `ANTHROPIC_API_KEY`, see below.
+4. Keep it fresh: schedule **daily.sh** once a day (cron on Mac/Linux, Task Scheduler on Windows
+   running `.venv\Scripts\python -m flprops daily`). It pulls live feeds, updates buyers, adds
+   new hot leads to the pipeline and lists today's follow-ups.
+
+Docker: `docker build -t flprops . && docker run -p 127.0.0.1:8765:8765 -v flprops:/data flprops`
+
+## The full workflow
+
+| Step | Where | What you get |
+|---|---|---|
+| 1. Find | Import data, Distressed | Stacked distress lists: pre-foreclosure, foreclosure, tax, liens, code, probate/estate, absentee, out-of-state, long-held |
+| 2. Contact | Pipeline, then skip-trace export/import | Owner and LLC decision-maker phones/emails, DNC-scrubbed dialer list |
+| 3. Market | Pipeline, then mailing list / letters | Mail-merge CSV and print-ready letters (cash offer, estate, pre-foreclosure, absentee) |
+| 4. Analyze | Property, then Deal analyzer | Comps/ARV, wholesale MAO, flip profit, BRRR cash flow, verdict |
+| 5. Track | Pipeline, Dashboard | Status, offers, follow-ups, activity log |
+| 6. Sell | Property analyzer, Buyers | Matched investor buyers for an assignment or wholetail |
+
+Letter templates live in `config/letters/`; edit them or add your own `.txt` files. The
+pre-foreclosure template is written to comply with Florida's foreclosure-rescue law (F.S. 501.1377).
+Have a Florida real-estate attorney review your marketing and contracts.
+
 ## How it gets the data (and what it won't do)
 
 | Record | Where it comes from | How it gets in |

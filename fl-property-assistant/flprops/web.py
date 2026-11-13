@@ -9,7 +9,7 @@ import tempfile
 
 from flask import Flask, Response, redirect, render_template_string, request, session, url_for
 
-from . import db, deals, fetch, importers, links, pipeline, search, skiptrace
+from . import buyers, db, deals, mail, fetch, importers, links, pipeline, search, skiptrace
 from .counties import COUNTIES
 
 BASE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -31,9 +31,10 @@ th{font-size:12px;color:var(--mute);font-weight:600}.wrap{overflow-x:auto}
 .tag{display:inline-block;font-size:11px;padding:1px 6px;margin:1px;border:1px solid var(--line);border-radius:5px;color:var(--mute)}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.mute{color:var(--mute)}
 .msg{white-space:pre-wrap;padding:10px 12px;border-radius:8px;margin:8px 0}.u{background:var(--bg)}.a{border:1px solid var(--line)}
+.kpi{font-size:28px;font-weight:700}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
 .flash{padding:10px;border-radius:8px;border:1px solid var(--line);margin-bottom:12px}
 </style></head><body><header><b>FL Property Records</b><a href="/">Search</a><a href="/distressed">Distressed</a>
-<a href="/pipeline">Pipeline</a><a href="/ask">Assistant</a><a href="/import">Import data</a><a href="/resources">County portals</a></header><main>
+<a href="/pipeline">Pipeline</a><a href="/buyers">Buyers</a><a href="/ask">Assistant</a><a href="/import">Import data</a><a href="/resources">County portals</a><a href="/settings">Settings</a></header><main>
 {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}{{ body|safe }}</main></body></html>"""
 
 COUNTY_SELECT = """<label>County<select name="county"><option value="">All</option>{% for no,c in counties %}
@@ -67,11 +68,34 @@ def create_app(db_path: str | None = None) -> Flask:
         q, county, z = request.args.get("q", ""), request.args.get("county", ""), request.args.get("zip", "")
         rows = search.search(conn, q, county or None, z or None, 100) if (q or county or z) else []
         st = search.stats(conn)
+        board = pipeline.board(conn)
+        due = [r for r in pipeline.board(conn, due_only=True)]
+        by_status = {s_: sum(1 for r in board if r["status"] == s_) for s_ in pipeline.STATUSES}
+        hot = [] if (q or county or z) else search.distressed(conn, None, None, 40, None, 10, scan_limit=50000)
+        nbuyers = conn.execute("SELECT COUNT(*) FROM buyers").fetchone()[0]
         body = """<div class="card"><form class="row"><label>Address, owner or parcel #<input name="q" size="40" value="{{ q }}"></label>
 """ + COUNTY_SELECT + """<label>ZIP<input name="zip" size="6" value="{{ z }}"></label><button>Search</button></form>
 <p class="mute">{{ "{:,}".format(st.parcels_by_county.values()|sum) }} parcels in {{ st.parcels_by_county|length }} counties ·
-{{ "{:,}".format(st.events_by_type.values()|sum) }} recorded events</p></div>""" + (RESULTS if rows or q else "")
-        return page(body, q=q, county=county, z=z, rows=rows, st=st)
+{{ "{:,}".format(st.events_by_type.values()|sum) }} recorded events · {{ nbuyers }} buyers</p></div>
+{% if not (q or county or z) %}<div class="kpis">
+<div class="card"><div class="mute">Leads in pipeline</div><div class="kpi">{{ board|length }}</div></div>
+<div class="card"><div class="mute">Follow-ups due</div><div class="kpi">{{ due|length }}</div></div>
+<div class="card"><div class="mute">Offers out</div><div class="kpi">{{ by_status.offer_made }}</div></div>
+<div class="card"><div class="mute">Under contract</div><div class="kpi">{{ by_status.under_contract }}</div></div>
+<div class="card"><div class="mute">Assigned / closed</div><div class="kpi">{{ by_status.assigned + by_status.closed }}</div></div></div>
+<div class="grid"><div class="card"><h3>Follow up today</h3>{% for r in due[:10] %}<div><a href="{{ url_for('prop', county=r.county, pid=r.parcel_id) }}">{{ r.site_addr }}</a>
+<span class="mute">{{ r.status }} · {{ r.owner_name }}</span></div>{% else %}<p class="mute">Nothing due.</p>{% endfor %}</div>
+<div class="card"><h3>Hottest leads</h3>{% for p in hot %}<div><span class="pill {{ p.distress.tier }}">{{ p.distress.score }}</span>
+<a href="{{ url_for('prop', county=p.county, pid=p.parcel_id) }}">{{ p.site_addr }}</a> <span class="mute">{{ p.site_city }}</span></div>
+{% else %}<p class="mute">Import data to see leads (Import data tab).</p>{% endfor %}</div></div>
+{% if not st.parcels_by_county %}<div class="card"><h3>Getting started</h3><ol>
+<li>Settings: enter your name, phone and company (used on letters).</li>
+<li>Download your counties' NAL files from the <a href="https://floridarevenue.com/property/dataportal/Pages/default.aspx" target="_blank">FL DOR data portal</a> and upload them under Import data.</li>
+<li>Upload any clerk / tax collector lists (lis pendens, probate, delinquent taxes, code violations).</li>
+<li>Distressed → add the best leads to your pipeline → skip trace → call / mail → run the numbers → match buyers.</li></ol></div>{% endif %}
+{% endif %}""" + (RESULTS if rows or q else "")
+        return page(body, q=q, county=county, z=z, rows=rows, st=st, board=board, due=due, by_status=by_status,
+                    hot=hot, nbuyers=nbuyers)
 
     @app.route("/property/<county>/<path:pid>")
     def prop(county, pid):
@@ -173,7 +197,12 @@ Prior sale: {{ p.prev_sale_year or "" }} {{ "${:,.0f}".format(p.prev_sale_price)
 <div class="wrap"><table><tr><th>Parcel</th><th>Address</th><th>Sq ft</th><th>Built</th><th>Sold</th><th>Price</th><th>$/sqft</th></tr>
 {% for c in r.comps.comps %}<tr><td>{{ c.parcel_id }}</td><td>{{ c.site_addr }}</td><td>{{ c.living_sqft }}</td><td>{{ c.year_built }}</td>
 <td>{{ c.last_sale_month }}/{{ c.last_sale_year }}</td><td>${{ "{:,.0f}".format(c.last_sale_price) }}</td><td>{{ c.price_psf }}</td></tr>{% endfor %}</table></div></div>"""
-        return page(body, p=p, r=r)
+        price = (r.get("wholesale") or {}).get("end_buyer_max_price")
+        bl = buyers.match(conn, p, price, 25)
+        body += """<div class="card"><h3>Buyers for this deal</h3>{% for b in bl %}<div><b>{{ b.name }}</b> <span class="mute">{{ b.fit }} ·
+{{ b.purchases_24mo or "?" }} buys in 24 mo · {{ b.phone or "" }} {{ b.email or "" }}</span></div>
+{% else %}<p class="mute">No matching buyers yet. Buyers → Find investor buyers, or upload your list.</p>{% endfor %}</div>"""
+        return page(body, p=p, r=r, bl=bl)
 
     @app.route("/pipeline")
     def pipeline_view():
@@ -182,13 +211,109 @@ Prior sale: {{ p.prev_sale_year or "" }} {{ "${:,.0f}".format(p.prev_sale_price)
         body = """<div class="card"><form class="row"><label>Status<select name="status"><option value="">All</option>
 {% for s in statuses %}<option {{ 'selected' if s==st else '' }}>{{ s }}</option>{% endfor %}</select></label>
 <label><span><input type="checkbox" name="due" value="1"> Follow-ups due</span></label><button>Show</button>
-<a href="/pipeline/dialer.csv">Dialer CSV</a> <a href="/pipeline/skiptrace.csv">Skip-trace upload CSV</a></form></div>
+<a href="/pipeline/dialer.csv">Dialer CSV</a> <a href="/pipeline/mail.csv">Mailing list CSV</a>
+{% for t in templates %}<a href="/pipeline/letters?template={{ t }}" target="_blank">Letters: {{ t }}</a> {% endfor %} <a href="/pipeline/skiptrace.csv">Skip-trace upload CSV</a></form></div>
 <div class="wrap"><table><tr><th>Status</th><th>Strategy</th><th>Property</th><th>Owner</th><th>Callable phones</th><th>Offer</th><th>Follow up</th></tr>
 {% for r in rows %}<tr><td>{{ r.status }}</td><td>{{ r.strategy or "" }}</td>
 <td><a href="{{ url_for('prop', county=r.county, pid=r.parcel_id) }}">{{ r.site_addr }}</a><br><span class="mute">{{ r.site_city }} {{ r.site_zip }}</span></td>
 <td>{{ r.owner_name }}</td><td>{{ r.callable_phones }}</td><td>{{ "${:,.0f}".format(r.offer) if r.offer else "" }}</td><td>{{ r.next_follow_up or "" }}</td></tr>
 {% else %}<tr><td colspan="7" class="mute">No leads yet. Use Distressed → "Add all to pipeline", or a property's Pipeline box.</td></tr>{% endfor %}</table></div>"""
-        return page(body, rows=rows, st=st, statuses=pipeline.STATUSES, flash=request.args.get("msg", ""))
+        return page(body, rows=rows, st=st, statuses=pipeline.STATUSES, flash=request.args.get("msg", ""),
+                    templates=list(mail.templates()))
+
+    def _pipeline_parcels():
+        ps = [search.get_property(conn, r["parcel_id"], r["county"]) for r in pipeline.board(conn)
+              if r["status"] not in ("dead", "closed")]
+        return [p for p in ps if p]
+
+    @app.route("/pipeline/mail.csv")
+    def mail_csv():
+        rows = mail.mailing_rows(_pipeline_parcels())
+        out = io.StringIO()
+        w = csv.DictWriter(out, list(rows[0]) if rows else ["addressee"]); w.writeheader(); w.writerows(rows)
+        return Response(out.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=mailing.csv"})
+
+    @app.route("/pipeline/letters")
+    def letters():
+        t = request.args.get("template", "cash_offer")
+        if t not in mail.templates():
+            return page("<p>Unknown template.</p>"), 404
+        return mail.render_letters(_pipeline_parcels(), t)
+
+    @app.route("/buyers", methods=["GET", "POST"])
+    def buyers_view():
+        flash = ""
+        if request.method == "POST":
+            if request.form.get("discover"):
+                flash = f"Found/updated {buyers.discover(conn)} investor buyers from the parcel roll."
+            elif request.files.get("file") and request.files["file"].filename:
+                f = request.files["file"]
+                with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+                    f.save(tmp.name)
+                try:
+                    flash = f"Imported {buyers.import_buyers(conn, tmp.name)} buyers."
+                finally:
+                    os.unlink(tmp.name)
+            elif request.form.get("name"):
+                fm = request.form
+                conn.execute("INSERT OR REPLACE INTO buyers (name, buyer_key, phone, email, zips, counties, min_price, "
+                             "max_price, strategies, notes, source) VALUES (?,?,?,?,?,?,?,?,?,?, 'manual')",
+                             (fm["name"], db.entity_key(fm["name"]), fm.get("phone"), fm.get("email"), fm.get("zips"),
+                              fm.get("counties"), float(fm["min_price"]) if fm.get("min_price") else None,
+                              float(fm["max_price"]) if fm.get("max_price") else None, fm.get("strategies"),
+                              fm.get("notes")))
+                conn.commit(); flash = "Buyer saved."
+        z, county = request.args.get("zip", ""), request.args.get("county", "")
+        rows = buyers.list_buyers(conn, z or None, county or None, 500)
+        if request.args.get("format") == "csv":
+            out = io.StringIO()
+            w = csv.DictWriter(out, ["name", "phone", "email", "mail_addr", "zips", "counties", "min_price", "max_price",
+                                     "purchases_24mo", "last_purchase", "strategies", "notes"], extrasaction="ignore")
+            w.writeheader(); w.writerows(rows)
+            return Response(out.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=buyers.csv"})
+        body = """<div class="grid"><div class="card"><h3>Find buyers</h3>
+<form method="post"><button name="discover" value="1">Find investor buyers in the parcel roll</button></form>
+<p class="mute">Owners who bought 2+ non-homestead properties in the last 24 months. Skip trace them like sellers.</p>
+<form method="post" enctype="multipart/form-data"><label>Upload your buyers CSV<input type="file" name="file"></label><button>Upload</button></form></div>
+<div class="card"><h3>Add a buyer</h3><form method="post" class="row"><label>Name<input name="name" required></label>
+<label>Phone<input name="phone" size="12"></label><label>Email<input name="email"></label><label>ZIPs<input name="zips" placeholder="33147,33142"></label>
+<label>Counties<input name="counties" placeholder="Miami-Dade"></label><label>Min $<input name="min_price" size="8"></label>
+<label>Max $<input name="max_price" size="8"></label><label>Buys for<input name="strategies" placeholder="flip, rental"></label>
+<label>Notes<input name="notes"></label><button>Save</button></form></div></div>
+<div class="card"><form class="row"><label>ZIP<input name="zip" size="6" value="{{ z }}"></label>""" + COUNTY_SELECT + """<button>Filter</button>
+<a href="?zip={{ z }}&county={{ county }}&format=csv">Download CSV</a></form></div>
+<div class="wrap"><table><tr><th>Buyer</th><th>Buys (24 mo)</th><th>Price range</th><th>Contact</th><th>ZIPs</th><th>Source</th></tr>
+{% for b in rows %}<tr><td><b>{{ b.name }}</b><br><span class="mute">{{ b.mail_addr or "" }}</span></td><td>{{ b.purchases_24mo or "" }}</td>
+<td>{{ "${:,.0f}".format(b.min_price) if b.min_price else "" }} – {{ "${:,.0f}".format(b.max_price) if b.max_price else "" }}</td>
+<td>{{ b.phone or "" }}<br>{{ b.email or "" }}</td><td class="mute">{{ (b.zips or "")[:60] }}</td><td class="mute">{{ b.source }}</td></tr>
+{% else %}<tr><td colspan="6" class="mute">No buyers yet.</td></tr>{% endfor %}</table></div>"""
+        return page(body, flash=flash, rows=rows, z=z, county=county)
+
+    @app.route("/settings", methods=["GET", "POST"])
+    def settings():
+        import json as _json
+        cfg = fetch.load_sources()
+        flash = ""
+        if request.method == "POST":
+            b = cfg.setdefault("business", {})
+            for k in ("your_name", "your_company", "your_phone", "your_email", "your_website"):
+                b[k] = request.form.get(k, "")
+            dd = cfg.setdefault("deal_defaults", {})
+            for k in ("assignment_fee", "wholesale_pct", "refi_rate", "hard_money_rate", "hold_months"):
+                if request.form.get(k):
+                    dd[k] = float(request.form[k])
+            fetch.CONFIG.write_text(_json.dumps(cfg, indent=2))
+            flash = "Saved."
+        bz, d = mail.business(), deals.defaults()
+        body = """<form method="post"><div class="grid"><div class="card"><h3>Your business (used on letters)</h3>
+{% for k,label in [("your_name","Name"),("your_company","Company"),("your_phone","Phone"),("your_email","Email"),("your_website","Website")] %}
+<p><label>{{ label }}<input name="{{ k }}" value="{{ bz[k] }}" size="32"></label></p>{% endfor %}</div>
+<div class="card"><h3>Deal assumptions</h3>
+{% for k,label in [("assignment_fee","Assignment fee ($)"),("wholesale_pct","Wholesale % of ARV (0.70 = 70% rule)"),("hold_months","Flip hold (months)"),("hard_money_rate","Hard money rate (0.11 = 11%)"),("refi_rate","Refi rate (0.075 = 7.5%)")] %}
+<p><label>{{ label }}<input name="{{ k }}" value="{{ d[k] }}" size="10"></label></p>{% endfor %}
+<p class="mute">More options (rehab $/sqft, closing costs, reserves) in config/sources.json → deal_defaults.</p></div></div>
+<button>Save settings</button></form>"""
+        return page(body, flash=flash, bz=bz, d=d)
 
     @app.route("/pipeline/dialer.csv")
     def dialer_csv():

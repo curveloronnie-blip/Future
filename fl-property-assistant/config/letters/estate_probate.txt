@@ -1,0 +1,19 @@
+# For properties held by an estate or heirs. Keep the tone respectful; families may be grieving.
+{date}
+
+Dear {dear},
+
+I'm sorry for your loss, and I apologize if this letter arrives at a difficult time.
+
+I understand the property at {property_address} in {property_city} may be part of an estate. Handling a house during probate can be a lot: upkeep, taxes, insurance, and agreeing on next steps among family.
+
+I buy homes as-is, including anything left inside, and I can work with the personal representative and the estate's attorney on timing. If selling would help, I'd be glad to make an offer, with no obligation.
+
+Please reach me at {your_phone} or {your_email} whenever it's convenient.
+
+With sympathy,
+
+{your_name}
+{your_company}
+
+If you'd prefer not to hear from me, let me know and I'll remove this address.

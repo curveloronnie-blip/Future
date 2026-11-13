@@ -6,7 +6,7 @@ import csv
 import json
 import sys
 
-from . import db, deals, fetch, importers, links, pipeline, search, skiptrace
+from . import buyers, db, deals, mail, fetch, importers, links, pipeline, search, skiptrace
 from .counties import COUNTIES
 
 
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", default=None, help="SQLite path (default data/flprops.db or $FLPROPS_DB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("import-nal", help="Import a FL DOR NAL parcel file (.csv or .zip)")
+    s = sub.add_parser("import-nal", help="Import FL DOR NAL parcel file(s): a .csv/.zip or a folder of them")
     s.add_argument("path"); s.add_argument("--county")
 
     s = sub.add_parser("import-events", help="Import a CSV of records (lis pendens, liens, probate, ...)")
@@ -85,6 +85,25 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("pipeline", help="Show your pipeline")
     s.add_argument("--status", choices=pipeline.STATUSES); s.add_argument("--due", action="store_true")
 
+    s = sub.add_parser("buyers-discover", help="Find active investor buyers in the parcel roll")
+    s.add_argument("--county"); s.add_argument("--min-purchases", type=int, default=2)
+    s = sub.add_parser("buyers-import", help="Import your own buyers list CSV"); s.add_argument("path")
+    s = sub.add_parser("buyers", help="List buyers (optionally by ZIP/county), or export with --csv")
+    s.add_argument("--zip"); s.add_argument("--county"); s.add_argument("--csv")
+    s = sub.add_parser("match-buyers", help="Buyers for a deal"); s.add_argument("parcel_id")
+    s.add_argument("--county"); s.add_argument("--price", type=float); s.add_argument("--csv")
+
+    s = sub.add_parser("mail-export", help="Mail-merge CSV of owner mailing addresses")
+    s.add_argument("out"); s.add_argument("--pipeline", action="store_true"); s.add_argument("--county")
+    s.add_argument("--zip"); s.add_argument("--min-score", type=int, default=40); s.add_argument("--limit", type=int, default=1000)
+    s = sub.add_parser("letters", help="Printable letters (HTML, print to PDF)")
+    s.add_argument("out"); s.add_argument("--template", default="cash_offer"); s.add_argument("--pipeline", action="store_true")
+    s.add_argument("--county"); s.add_argument("--zip"); s.add_argument("--min-score", type=int, default=40)
+    s.add_argument("--limit", type=int, default=200)
+
+    s = sub.add_parser("daily", help="Refresh live feeds, update buyers, add new hot leads (schedule this)")
+    s.add_argument("--min-score", type=int, default=50); s.add_argument("--county", action="append")
+
     sub.add_parser("counties", help="List the 67 counties and DOR numbers")
     sub.add_parser("status", help="Database contents")
     sub.add_parser("unmatched", help="Imported events that don't match a loaded parcel")
@@ -95,8 +114,11 @@ def main(argv: list[str] | None = None) -> int:
     conn = db.connect(a.db)
 
     if a.cmd == "import-nal":
-        n = importers.import_nal(conn, a.path, a.county, progress=lambda n: print(f"  {n:,} rows...", file=sys.stderr))
-        print(f"Imported {n:,} parcels.")
+        from pathlib import Path
+        paths = sorted(Path(a.path).glob("*.zip")) + sorted(Path(a.path).glob("*.csv")) if Path(a.path).is_dir() else [a.path]
+        for path in paths:
+            n = importers.import_nal(conn, path, a.county, progress=lambda n: print(f"  {n:,} rows...", file=sys.stderr))
+            print(f"{path}: imported {n:,} parcels.")
     elif a.cmd == "import-events":
         print(f"Added {importers.import_events(conn, a.path, a.type, a.county, a.source):,} new {a.type} records.")
     elif a.cmd == "refresh":
@@ -185,6 +207,51 @@ def main(argv: list[str] | None = None) -> int:
         for r in pipeline.board(conn, a.status, a.due):
             print(f"{r['status']:<15} {r['county']:<12} {r['parcel_id']:<22} {(r['site_addr'] or '')[:30]:<30} "
                   f"{(r['owner_name'] or '')[:28]:<28} phones:{r['callable_phones']} follow-up:{r['next_follow_up'] or '-'}")
+    elif a.cmd == "buyers-discover":
+        print(f"Found/updated {buyers.discover(conn, a.county, a.min_purchases)} investor buyers.")
+    elif a.cmd == "buyers-import":
+        print(f"Imported {buyers.import_buyers(conn, a.path)} buyers.")
+    elif a.cmd == "buyers":
+        rows = buyers.list_buyers(conn, a.zip, a.county)
+        if a.csv:
+            print(f"Wrote {buyers.export_buyers(rows, a.csv)} buyers to {a.csv}")
+        for b in rows[:100]:
+            print(f"{b['name'][:36]:<36} buys:{b['purchases_24mo'] or '-':<3} ${b['min_price'] or 0:>9,.0f}-${b['max_price'] or 0:<9,.0f} "
+                  f"{b['phone'] or '':<12} {(b['zips'] or '')[:40]}")
+    elif a.cmd == "match-buyers":
+        p = _need(conn, a)
+        rows = buyers.match(conn, p, a.price)
+        if a.csv:
+            buyers.export_buyers(rows, a.csv)
+        for b in rows:
+            print(f"{b['fit']:<12} {b['name'][:36]:<36} buys:{b['purchases_24mo'] or '-'} {b['phone'] or ''} {b['email'] or ''}")
+    elif a.cmd in ("mail-export", "letters"):
+        if a.pipeline:
+            ps = [search.get_property(conn, r["parcel_id"], r["county"]) for r in pipeline.board(conn)
+                  if r["status"] not in ("dead", "closed")]
+        else:
+            ps = search.distressed(conn, a.county, a.zip, a.min_score, None, a.limit)
+        ps = [p for p in ps if p]
+        if a.cmd == "mail-export":
+            print(f"Wrote {mail.export_mailing_list(ps, a.out)} addresses to {a.out}")
+        else:
+            if a.template not in mail.templates():
+                raise SystemExit(f"Templates: {', '.join(mail.templates())}")
+            open(a.out, "w").write(mail.render_letters(ps, a.template))
+            print(f"Wrote {len(mail.mailing_rows(ps))} letters to {a.out}. Open it in a browser and print / save as PDF.")
+    elif a.cmd == "daily":
+        for r in fetch.refresh_all(conn):
+            print(json.dumps(r))
+        print(f"Buyers updated: {buyers.discover(conn)}")
+        added = 0
+        for c in (a.county or [None]):
+            added += pipeline.add_leads(conn, search.distressed(conn, c, None, a.min_score, None, 1000),
+                                        f"auto {__import__('datetime').date.today()}")
+        print(f"New hot leads added to pipeline: {added}")
+        due = pipeline.board(conn, due_only=True)
+        print(f"Follow-ups due today: {len(due)}")
+        for r in due[:25]:
+            print(f"  {r['status']:<14} {r['site_addr']}, {r['site_city']}  {r['owner_name']}")
     elif a.cmd == "counties":
         for no, name in COUNTIES:
             print(no, name)
