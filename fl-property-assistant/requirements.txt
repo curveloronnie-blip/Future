@@ -1,0 +1,4 @@
+anthropic>=2.8
+flask>=3.0
+requests>=2.31
+pytest>=8

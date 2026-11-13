@@ -1,0 +1,83 @@
+{
+  "_readme": [
+    "Live sources pulled by `flprops refresh`. Only entries with \"enabled\": true run.",
+    "kind=arcgis: paste a FeatureServer/MapServer *layer* URL (ends in /0, /1 ...). Find them on the",
+    "  county or city open-data hub (search '<county> open data parcels' or 'code enforcement'),",
+    "  open the dataset, choose 'View API resources' / 'I want to use this' and copy the layer URL.",
+    "kind=socrata: give the domain and the 4x4 dataset id (e.g. data.cityofxyz.gov, abcd-1234).",
+    "field_map maps our fields (left) to the source's field names (right). A list joins fields.",
+    "target=parcels updates the parcel table; otherwise rows become events of event_type.",
+    "Event types: lis_pendens, foreclosure, foreclosure_sale, tax_delinquent, tax_deed, lien,",
+    "  code_violation, probate, death, bankruptcy, eviction, divorce, utility_shutoff, vacant, other.",
+    "county_overrides lets you correct or add portal URLs used in links."
+  ],
+  "sources": [
+    {
+      "name": "example-county-parcels-arcgis",
+      "enabled": false,
+      "kind": "arcgis",
+      "target": "parcels",
+      "county": "Orange",
+      "url": "PASTE_FEATURESERVER_LAYER_URL_HERE",
+      "where": "1=1",
+      "field_map": {
+        "parcel_id": "PARCEL",
+        "owner_name": "OWNER",
+        "owner_addr1": "MAIL_ADDR",
+        "owner_city": "MAIL_CITY",
+        "owner_state": "MAIL_STATE",
+        "owner_zip": "MAIL_ZIP",
+        "site_addr": "SITE_ADDR",
+        "site_city": "SITE_CITY",
+        "site_zip": "SITE_ZIP",
+        "just_value": "JUST_VALUE"
+      }
+    },
+    {
+      "name": "example-city-code-violations-socrata",
+      "enabled": false,
+      "kind": "socrata",
+      "target": "events",
+      "event_type": "code_violation",
+      "county": "Orange",
+      "domain": "PASTE_SOCRATA_DOMAIN",
+      "dataset": "xxxx-xxxx",
+      "where": "status = 'OPEN'",
+      "field_map": {
+        "parcel_id": "parcel_id",
+        "site_addr": "address",
+        "event_date": "case_open_date",
+        "case_number": "case_number",
+        "description": "violation_description"
+      }
+    },
+    {
+      "name": "example-county-code-cases-arcgis",
+      "enabled": false,
+      "kind": "arcgis",
+      "target": "events",
+      "event_type": "code_violation",
+      "county": "Miami-Dade",
+      "url": "PASTE_FEATURESERVER_LAYER_URL_HERE",
+      "where": "1=1",
+      "field_map": {
+        "parcel_id": "FOLIO",
+        "site_addr": "ADDRESS",
+        "event_date": "CASE_DATE",
+        "case_number": "CASE_NUM",
+        "description": "VIOLATION"
+      }
+    }
+  ],
+  "county_overrides": {
+    "Example County": {
+      "property_appraiser": "https://...",
+      "clerk_official_records": "https://...",
+      "clerk_court_records": "https://...",
+      "tax_collector": "https://...",
+      "code_enforcement": "https://...",
+      "foreclosure_auction": "https://...",
+      "tax_deed_auction": "https://..."
+    }
+  }
+}
