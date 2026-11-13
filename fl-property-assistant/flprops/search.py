@@ -56,6 +56,13 @@ def get_property(conn: sqlite3.Connection, parcel_id: str, county: str | None = 
     p["events"] = _events_for(conn, p)
     p["distress"] = distress.score(p, p["events"])
     p["links"] = property_links(p)
+    from . import pipeline, skiptrace
+    p["contacts"] = skiptrace.contacts_for(conn, p["county"], p["parcel_key"])
+    p["decision_makers"] = []
+    for n in skiptrace.split_owner_names(p.get("owner_name")):
+        if "entity" in n:
+            p["decision_makers"] += skiptrace.decision_makers(conn, n["entity"])
+    p["lead"] = pipeline.get_lead(conn, p["county"], p["parcel_key"])
     return p
 
 

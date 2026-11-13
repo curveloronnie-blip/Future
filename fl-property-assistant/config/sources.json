@@ -79,5 +79,43 @@
       "foreclosure_auction": "https://...",
       "tax_deed_auction": "https://..."
     }
+  },
+  "skiptrace": {
+    "_readme": [
+      "Optional direct API to your skip-trace provider. Copy the endpoint, request body and response",
+      "field paths from YOUR provider's API docs. Placeholders: {first_name} {last_name} {address} {city} {state}",
+      "{zip} {mailing_address} {mailing_city} {mailing_state} {mailing_zip}. Paths use dots, e.g. results.0.phones.",
+      "The key is read from the environment variable named in api_key_env; never put it in this file.",
+      "Without this, use: flprops skiptrace-export -> upload to provider -> flprops skiptrace-import."
+    ],
+    "enabled": false,
+    "name": "my-provider",
+    "method": "POST",
+    "url": "https://api.your-provider.example/v1/skiptrace",
+    "api_key_env": "SKIPTRACE_API_KEY",
+    "auth_header": "Authorization",
+    "auth_prefix": "Bearer ",
+    "request_template": {
+      "first_name": "{first_name}",
+      "last_name": "{last_name}",
+      "address": {
+        "street": "{address}",
+        "city": "{city}",
+        "state": "{state}",
+        "zip": "{zip}"
+      }
+    },
+    "response": {
+      "phones": "result.phones",
+      "phone_number": "number",
+      "phone_type": "type",
+      "phone_dnc": "dnc",
+      "emails": "result.emails",
+      "email_address": "email"
+    }
+  },
+  "deal_defaults": {
+    "_readme": "Override any key from flprops/deals.py DEFAULTS, e.g. assignment_fee, rehab_psf, refi_rate.",
+    "assignment_fee": 10000
   }
 }

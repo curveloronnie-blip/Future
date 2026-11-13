@@ -10,7 +10,7 @@ import sqlite3
 
 import anthropic
 
-from . import fetch, links, search
+from . import deals, fetch, links, pipeline, search, skiptrace
 from .db import EVENT_TYPES
 
 MODEL = "claude-opus-5-5"
@@ -29,6 +29,14 @@ Some clerk and auction sites require a person to pass a CAPTCHA or accept a disc
 offer to bypass those; give the link instead. Note the data's freshness when relevant (NAL files
 are annual with mid-year updates; events are as fresh as their last import).
 Distress scores are heuristics, not facts about a person's circumstances; present them as such.
+You also help a real-estate investor work leads: get_contacts returns skip-traced phones/emails
+and LLC decision makers already in the database (skip tracing itself is done through the user's
+provider; never guess or fabricate phone numbers). Flag numbers marked DNC or litigator and remind
+the user to scrub before calling or texting. analyze_deal gives comps-based ARV, wholesale max
+offer (70% rule), fix-and-flip profit and BRRRR cash flow; state the assumptions and that ARV from
+the parcel roll is rough. Use update_lead to record status, strategy, offers and follow-ups when
+the user asks.
+
 Keep answers tight: lead with the answer, then a short table or list."""
 
 TOOLS = [
@@ -91,6 +99,45 @@ TOOLS = [
         },
     },
     {
+        "name": "get_contacts",
+        "description": "Owner and decision-maker contact info already in the database for a parcel: skip-traced "
+                       "phones (with type and DNC/litigator flags), emails, mailing address, LLC officers/managers.",
+        "input_schema": {"type": "object", "properties": {"parcel_id": {"type": "string"},
+                                                          "county": {"type": "string"}},
+                         "required": ["parcel_id"], "additionalProperties": False},
+    },
+    {
+        "name": "analyze_deal",
+        "description": "Run comps/ARV, repair estimate, wholesale max allowable offer, fix-and-flip profit, and "
+                       "BRRRR (needs rent) for a parcel. Any number omitted is estimated.",
+        "input_schema": {"type": "object", "properties": {
+            "parcel_id": {"type": "string"}, "county": {"type": "string"},
+            "arv": {"type": "number"}, "repairs": {"type": "number"},
+            "rehab_level": {"type": "string", "enum": ["light", "medium", "heavy", "gut"]},
+            "rent": {"type": "number", "description": "Monthly market rent."},
+            "purchase": {"type": "number", "description": "Purchase price; defaults to wholesale MAO."}},
+            "required": ["parcel_id"], "additionalProperties": False},
+    },
+    {
+        "name": "update_lead",
+        "description": "Add a parcel to the pipeline or update it: status, strategy, offer, ARV, repairs, rent, "
+                       "follow-up date (YYYY-MM-DD), and an optional note.",
+        "input_schema": {"type": "object", "properties": {
+            "parcel_id": {"type": "string"}, "county": {"type": "string"},
+            "status": {"type": "string", "enum": pipeline.STATUSES},
+            "strategy": {"type": "string", "enum": pipeline.STRATEGIES},
+            "offer": {"type": "number"}, "arv": {"type": "number"}, "repairs": {"type": "number"},
+            "rent": {"type": "number"}, "next_follow_up": {"type": "string"}, "note": {"type": "string"}},
+            "required": ["parcel_id"], "additionalProperties": False},
+    },
+    {
+        "name": "list_pipeline",
+        "description": "Leads in the pipeline, optionally by status or only those with follow-ups due.",
+        "input_schema": {"type": "object", "properties": {
+            "status": {"type": "string", "enum": pipeline.STATUSES}, "due_only": {"type": "boolean"}},
+            "additionalProperties": False},
+    },
+    {
         "name": "database_status",
         "description": "What's loaded: parcel counts by county, event counts by type, latest imports.",
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -134,6 +181,28 @@ def run_tool(conn: sqlite3.Connection, name: str, args: dict):
         return [_slim(p) for p in rows]
     if name == "county_resources":
         return links.county_links(args["county"])
+    if name in ("get_contacts", "analyze_deal", "update_lead"):
+        p = search.get_property(conn, args["parcel_id"], args.get("county"))
+        if not p:
+            return {"error": "parcel not found in local database"}
+        if name == "get_contacts":
+            return {"owner": p["owner_name"], "mailing": " ".join(str(p.get(k) or "") for k in
+                    ("owner_addr1", "owner_city", "owner_state", "owner_zip")),
+                    "decision_makers": p["decision_makers"], "contacts": p["contacts"],
+                    "note": None if p["contacts"] else "Not skip traced yet: export with skiptrace-export or use the API."}
+        if name == "analyze_deal":
+            r = deals.analyze(conn, p, args.get("arv"), args.get("repairs"), args.get("rehab_level") or "medium",
+                              args.get("rent"), args.get("purchase"))
+            r["comps"]["comps"] = r["comps"]["comps"][:6]
+            return r
+        pipeline.add_leads(conn, [p])
+        pipeline.update_lead(conn, p["county"], p["parcel_key"], **{k: v for k, v in args.items()
+                                                                     if k not in ("parcel_id", "county", "note")})
+        if args.get("note"):
+            pipeline.log(conn, p["county"], p["parcel_key"], "note", args["note"])
+        return pipeline.get_lead(conn, p["county"], p["parcel_key"])
+    if name == "list_pipeline":
+        return pipeline.board(conn, args.get("status"), bool(args.get("due_only")))[:100]
     if name == "database_status":
         return search.stats(conn)
     if name == "refresh_live_sources":

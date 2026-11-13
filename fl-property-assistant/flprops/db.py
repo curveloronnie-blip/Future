@@ -56,6 +56,39 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS ix_events_parcel ON events(county, parcel_key);
 CREATE INDEX IF NOT EXISTS ix_events_site ON events(site_key);
 
+CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    county TEXT, parcel_key TEXT,
+    name TEXT, role TEXT,              -- owner, co-owner, manager, officer, registered agent, personal rep, heir
+    phone TEXT, phone_type TEXT,       -- mobile / landline / voip
+    dnc INTEGER DEFAULT 0,             -- 1 = on a Do Not Call list: do not cold call / text
+    litigator INTEGER DEFAULT 0,       -- 1 = known TCPA litigator flag from provider
+    email TEXT, mail_addr TEXT,
+    source TEXT, added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (county, parcel_key, name, phone, email)
+);
+CREATE INDEX IF NOT EXISTS ix_contacts_parcel ON contacts(county, parcel_key);
+
+CREATE TABLE IF NOT EXISTS entities (
+    doc_number TEXT, entity_name TEXT NOT NULL, entity_key TEXT NOT NULL,
+    status TEXT, person_name TEXT, title TEXT, person_addr TEXT, source TEXT,
+    UNIQUE (entity_key, person_name, title)
+);
+CREATE INDEX IF NOT EXISTS ix_entities_key ON entities(entity_key);
+
+CREATE TABLE IF NOT EXISTS leads (
+    county TEXT NOT NULL, parcel_key TEXT NOT NULL,
+    status TEXT DEFAULT 'new', strategy TEXT, list_name TEXT,
+    arv REAL, repairs REAL, rent REAL, offer REAL, notes TEXT,
+    next_follow_up TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (county, parcel_key)
+);
+
+CREATE TABLE IF NOT EXISTS activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, county TEXT, parcel_key TEXT,
+    kind TEXT, note TEXT, at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS imports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT, kind TEXT, rows INTEGER, ran_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -95,6 +128,9 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL") if path != ":memory:" else None
     conn.executescript(SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(parcels)")}
+    if "sale_qual" not in cols:  # migrate databases created by v0.1
+        conn.execute("ALTER TABLE parcels ADD COLUMN sale_qual TEXT")
     return conn
 
 
@@ -102,7 +138,7 @@ PARCEL_COLS = [
     "county", "parcel_id", "parcel_key", "owner_name", "owner_addr1", "owner_addr2", "owner_city",
     "owner_state", "owner_zip", "site_addr", "site_city", "site_zip", "site_key", "use_code",
     "just_value", "land_value", "homestead", "year_built", "living_sqft", "units", "last_sale_price",
-    "last_sale_year", "last_sale_month", "prev_sale_price", "prev_sale_year", "legal", "source",
+    "last_sale_year", "last_sale_month", "sale_qual", "prev_sale_price", "prev_sale_year", "legal", "source",
 ]
 
 
@@ -141,6 +177,13 @@ def add_events(conn: sqlite3.Connection, rows: list[dict]) -> int:
         )
         n += cur.rowcount
     return n
+
+
+def entity_key(name: str | None) -> str:
+    """'ACME HOLDINGS, L.L.C.' == 'Acme Holdings LLC'."""
+    s = re.sub(r"[^0-9A-Z ]", "", (name or "").upper().replace("L.L.C", "LLC"))
+    s = re.sub(r"\b(L L C)\b", "LLC", s)
+    return " ".join(s.split())
 
 
 def log_import(conn: sqlite3.Connection, source: str, kind: str, rows: int) -> None:

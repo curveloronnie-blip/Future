@@ -6,7 +6,7 @@ import csv
 import json
 import sys
 
-from . import db, fetch, importers, links, search
+from . import db, deals, fetch, importers, links, pipeline, search, skiptrace
 from .counties import COUNTIES
 
 
@@ -15,6 +15,13 @@ def _print_table(rows: list[dict]) -> None:
         d = p["distress"]
         print(f"[{d['score']:>3} {d['tier']:<6}] {p['county']:<12} {p['parcel_id']:<22} "
               f"{(p.get('site_addr') or '')[:34]:<34} {p.get('site_zip') or '':<6} {(p.get('owner_name') or '')[:36]}")
+
+
+def _need(conn, a):
+    p = search.get_property(conn, a.parcel_id, a.county)
+    if not p:
+        raise SystemExit("Parcel not found in local database.")
+    return p
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,6 +52,38 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("links", help="Official portal links for a county")
     s.add_argument("county", nargs="?")
+
+    s = sub.add_parser("skiptrace-export", help="Write a skip-trace upload file for distressed leads / your pipeline")
+    s.add_argument("out"); s.add_argument("--county"); s.add_argument("--zip"); s.add_argument("--min-score", type=int, default=40)
+    s.add_argument("--pipeline", action="store_true", help="export leads in your pipeline instead")
+    s.add_argument("--limit", type=int, default=500)
+    s = sub.add_parser("skiptrace-import", help="Import your skip-trace provider's results file")
+    s.add_argument("path")
+    s = sub.add_parser("skiptrace-api", help="Skip trace one parcel through the API in config/sources.json")
+    s.add_argument("parcel_id"); s.add_argument("--county")
+    s = sub.add_parser("import-entities", help="Import LLC/corp officers & registered agents (decision makers)")
+    s.add_argument("path")
+    s = sub.add_parser("contacts", help="Phones/emails/decision makers for a parcel")
+    s.add_argument("parcel_id"); s.add_argument("--county")
+    s = sub.add_parser("dialer-export", help="Callable numbers for pipeline leads (DNC/litigators removed)")
+    s.add_argument("out"); s.add_argument("--include-dnc", action="store_true")
+
+    s = sub.add_parser("analyze", help="Comps, ARV, wholesale MAO, flip and BRRRR numbers for a parcel")
+    s.add_argument("parcel_id"); s.add_argument("--county"); s.add_argument("--arv", type=float)
+    s.add_argument("--repairs", type=float); s.add_argument("--rehab", default="medium",
+                                                           choices=["light", "medium", "heavy", "gut"])
+    s.add_argument("--rent", type=float); s.add_argument("--purchase", type=float)
+
+    s = sub.add_parser("lead", help="Add/update a lead in your pipeline")
+    s.add_argument("parcel_id"); s.add_argument("--county"); s.add_argument("--status", choices=pipeline.STATUSES)
+    s.add_argument("--strategy", choices=pipeline.STRATEGIES); s.add_argument("--offer", type=float)
+    s.add_argument("--follow-up", help="YYYY-MM-DD"); s.add_argument("--note")
+    s = sub.add_parser("add-leads", help="Add the distressed list to your pipeline")
+    s.add_argument("--county"); s.add_argument("--zip"); s.add_argument("--min-score", type=int, default=40)
+    s.add_argument("--require", nargs="*", default=[]); s.add_argument("--limit", type=int, default=200)
+    s.add_argument("--list-name")
+    s = sub.add_parser("pipeline", help="Show your pipeline")
+    s.add_argument("--status", choices=pipeline.STATUSES); s.add_argument("--due", action="store_true")
 
     sub.add_parser("counties", help="List the 67 counties and DOR numbers")
     sub.add_parser("status", help="Database contents")
@@ -93,6 +132,59 @@ def main(argv: list[str] | None = None) -> int:
         else:
             for k, v in links.STATEWIDE.items():
                 print(f"{k:<72} {v}")
+    elif a.cmd == "skiptrace-export":
+        if a.pipeline:
+            ps = [search.get_property(conn, r["parcel_id"], r["county"]) for r in pipeline.board(conn)]
+        else:
+            ps = search.distressed(conn, a.county, a.zip, a.min_score, None, a.limit)
+        n = skiptrace.export_for_skiptrace(conn, [p for p in ps if p], a.out)
+        print(f"Wrote {n} people to {a.out}. Upload it to your skip-trace provider, then run skiptrace-import.")
+    elif a.cmd == "skiptrace-import":
+        n = skiptrace.import_skiptrace_results(conn, a.path); conn.commit()
+        print(f"Added {n} phone numbers / emails.")
+    elif a.cmd == "skiptrace-api":
+        p = _need(conn, a)
+        print(f"Added {skiptrace.trace_via_api(conn, p)} contacts.")
+        pipeline.update_lead(conn, p["county"], p["parcel_key"], status="skip_traced")
+    elif a.cmd == "import-entities":
+        n = skiptrace.import_entities(conn, a.path); conn.commit()
+        print(f"Imported {n} entity officers / agents.")
+    elif a.cmd == "contacts":
+        p = _need(conn, a)
+        print(f"{p['owner_name']}  ({p['site_addr']}, {p['site_city']})")
+        print(f"Mailing: {p['owner_addr1']}, {p['owner_city']} {p['owner_state']} {p['owner_zip']}")
+        for dm in p["decision_makers"]:
+            print(f"  decision maker: {dm['person_name']} ({dm['title']}) {dm['person_addr']}")
+        for c in p["contacts"]:
+            flag = (" DNC" if c["dnc"] else "") + (" LITIGATOR" if c["litigator"] else "")
+            print(f"  {c['name']:<24} {c['role']:<18} {c['phone'] or '':<11} {c['phone_type'] or '':<9} "
+                  f"{c['email'] or ''}{flag}")
+        if not p["contacts"]:
+            print("  No contacts yet: run skiptrace-export / skiptrace-import, or skiptrace-api.")
+    elif a.cmd == "dialer-export":
+        print(f"Wrote {skiptrace.export_dialer_list(conn, a.out, a.include_dnc)} numbers to {a.out}.")
+    elif a.cmd == "analyze":
+        p = _need(conn, a)
+        lead = p.get("lead") or {}
+        r = deals.analyze(conn, p, a.arv or lead.get("arv"), a.repairs if a.repairs is not None else lead.get("repairs"),
+                          a.rehab, a.rent or lead.get("rent"), a.purchase)
+        r.pop("assumptions", None)
+        print(json.dumps(r, indent=2, default=str))
+    elif a.cmd == "lead":
+        p = _need(conn, a)
+        pipeline.update_lead(conn, p["county"], p["parcel_key"], status=a.status, strategy=a.strategy,
+                             offer=a.offer, next_follow_up=a.follow_up)
+        if a.note:
+            pipeline.log(conn, p["county"], p["parcel_key"], "note", a.note)
+        pipeline.add_leads(conn, [p])
+        print(json.dumps(pipeline.get_lead(conn, p["county"], p["parcel_key"]), indent=2, default=str))
+    elif a.cmd == "add-leads":
+        rows = search.distressed(conn, a.county, a.zip, a.min_score, a.require, a.limit)
+        print(f"Added {pipeline.add_leads(conn, rows, a.list_name)} new leads (of {len(rows)} matching).")
+    elif a.cmd == "pipeline":
+        for r in pipeline.board(conn, a.status, a.due):
+            print(f"{r['status']:<15} {r['county']:<12} {r['parcel_id']:<22} {(r['site_addr'] or '')[:30]:<30} "
+                  f"{(r['owner_name'] or '')[:28]:<28} phones:{r['callable_phones']} follow-up:{r['next_follow_up'] or '-'}")
     elif a.cmd == "counties":
         for no, name in COUNTIES:
             print(no, name)

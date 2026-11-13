@@ -72,7 +72,7 @@ def nal_row_to_parcel(r: dict, county_override: str | None = None) -> dict | Non
         "year_built": _int(g("ACT_YR_BLT")) or _int(g("EFF_YR_BLT")),
         "living_sqft": _int(g("TOT_LVG_AREA")), "units": _int(g("NO_RES_UNTS")),
         "last_sale_price": _num(g("SALE_PRC1")), "last_sale_year": _int(g("SALE_YR1")),
-        "last_sale_month": _int(g("SALE_MO1")),
+        "last_sale_month": _int(g("SALE_MO1")), "sale_qual": g("QUAL_CD1"),
         "prev_sale_price": _num(g("SALE_PRC2")), "prev_sale_year": _int(g("SALE_YR2")),
         "legal": g("S_LEGAL"), "source": "FL DOR NAL",
     }

@@ -1,6 +1,6 @@
 # Florida Property Records Assistant
 
-Search Florida property records statewide and find distressed properties (pre-foreclosure,
+Lead generation and deal analysis for wholesaling, fix-and-flip and BRRRR. Search Florida property records statewide and find distressed properties (pre-foreclosure,
 foreclosure, tax delinquency, liens, code violations, probate / estate-owned, absentee and
 out-of-state owners). Includes a plain-English AI assistant powered by Claude.
 
@@ -72,6 +72,57 @@ python -m flprops chat
 ```
 The assistant answers only from your database and gives official links for anything it
 doesn't have. It never makes up owners or case numbers.
+
+## Investor workflow: leads → contacts → numbers → deal
+
+```bash
+# 1. Build a list and put it in your pipeline
+python -m flprops add-leads --county Duval --min-score 40 --list-name "Duval Nov"
+
+# 2. Skip trace owners and decision makers (CSV round trip works with any provider)
+python -m flprops skiptrace-export upload.csv --pipeline      # upload to your skip-trace service
+python -m flprops skiptrace-import results.csv                # phones (type, DNC), emails
+python -m flprops import-entities sunbiz_officers.csv         # LLC managers/officers -> decision makers
+python -m flprops contacts 30-1234-000-0040 --county Miami-Dade
+
+# 3. Run the numbers: comps/ARV, wholesale MAO, fix & flip, BRRRR
+python -m flprops analyze 30-1234-000-0040 --county Miami-Dade --rent 2400
+python -m flprops analyze 30-1234-000-0040 --arv 340000 --repairs 55000 --rent 2400
+
+# 4. Work the pipeline
+python -m flprops lead 30-1234-000-0040 --status offer_made --strategy flip --offer 185000 --follow-up 2026-11-20
+python -m flprops pipeline --due
+python -m flprops dialer-export calls.csv                     # DNC + litigator numbers removed
+```
+
+In the web app, every property page has Contacts, Pipeline and Deal analyzer boxes. Pipeline
+also downloads the skip-trace upload file and the dialer list. The assistant can do all of it
+from a chat ("run the numbers on 100 Test St at $2,400 rent and move it to offer_made at $150k").
+
+**Skip tracing.** Phones and emails come from a skip-trace provider you pay for, such as
+BatchSkipTracing, REISkip, PropStream, BatchData or DataTree. Use the CSV export/import with any
+of them, or set up direct API calls under `"skiptrace"` in `config/sources.json`. For direct API
+calls, copy the endpoint and field names from your provider's API docs and put the key in the
+`SKIPTRACE_API_KEY` environment variable. The tool decides who to trace:
+- individual owners: co-owners are split apart, and estate/trust wording is stripped from names
+- LLC owners: their managers and officers, once you've imported them (`import-entities`)
+- estates: the probate party, once you've imported probate records.
+
+**Decision makers for LLCs.** Sunbiz lists every Florida entity's managers, officers and
+registered agent. The FL Division of Corporations offers bulk data downloads. You can also save
+officers from Sunbiz detail pages into a CSV with entity name, officer name, title and address.
+
+**Calling and texting rules.** Numbers flagged DNC or litigator by your provider are kept for
+reference but left out of dialer exports. You are still responsible for scrubbing against the
+National and Florida DNC lists. Florida's Telemarketing Act (FTSA) and the federal TCPA require
+prior express written consent before autodialed calls or texts. Wholesalers get sued under these
+laws often.
+
+**Deal math defaults.** Defaults are the 70% rule, a $10k assignment fee, $20/$40/$65/$90 per
+sq ft rehab, 11% hard money at 2 points, 75% LTV refinance at 7.5%, and 26% of rent reserved for
+vacancy, maintenance, capex and management. Change them in `config/sources.json` →
+`deal_defaults`. ARV from parcel-roll sales is rough because the roll has no condition data.
+Confirm with MLS sold comps before you make an offer.
 
 ## Distress score (0–100)
 
